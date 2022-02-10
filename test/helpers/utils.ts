@@ -6,7 +6,6 @@ import CHAINLINK_PRICER_ABI from "../../constants/abis/ChainLinkPricer.json";
 import {
   CHAINID,
   GAMMA_ORACLE,
-  GAMMA_ORACLE_NEW,
   GAMMA_WHITELIST,
   GAMMA_WHITELIST_OWNER,
   ORACLE_DISPUTE_PERIOD,
@@ -14,6 +13,7 @@ import {
   ORACLE_OWNER,
   USDC_ADDRESS,
   WBTC_ADDRESS,
+  SAVAX_ADDRESS,
 } from "../../constants/constants";
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/dist/src/signers";
 import { BigNumber, BigNumberish, Contract } from "ethers";
@@ -114,11 +114,7 @@ export async function getAssetPricer(
   return await pricerContract.connect(ownerSigner);
 }
 
-export async function setAssetPricer(
-  asset: string,
-  pricer: string,
-  isSTETH = false
-) {
+export async function setAssetPricer(asset: string, pricer: string) {
   await hre.network.provider.request({
     method: "hardhat_impersonateAccount",
     params: [ORACLE_OWNER[chainId]],
@@ -126,10 +122,7 @@ export async function setAssetPricer(
 
   const ownerSigner = await provider.getSigner(ORACLE_OWNER[chainId]);
 
-  const oracle = await ethers.getContractAt(
-    "IOracle",
-    isSTETH ? GAMMA_ORACLE_NEW[chainId] : GAMMA_ORACLE[chainId]
-  );
+  const oracle = await ethers.getContractAt("IOracle", GAMMA_ORACLE[chainId]);
 
   await oracle.connect(ownerSigner).setAssetPricer(asset, pricer);
 }
@@ -138,13 +131,10 @@ export async function whitelistProduct(
   underlying: string,
   strike: string,
   collateral: string,
-  isPut: boolean,
-  useNew = false
+  isPut: boolean
 ) {
   const [adminSigner] = await ethers.getSigners();
-  const ownerAddress = useNew
-    ? GAMMA_WHITELIST_OWNER[chainId]
-    : ORACLE_OWNER[chainId];
+  const ownerAddress = GAMMA_WHITELIST_OWNER[chainId];
 
   await hre.network.provider.request({
     method: "hardhat_impersonateAccount",
@@ -160,7 +150,7 @@ export async function whitelistProduct(
 
   await adminSigner.sendTransaction({
     to: ownerAddress,
-    value: parseEther("1"),
+    value: parseEther("3"),
   });
 
   await whitelist.connect(ownerSigner).whitelistCollateral(collateral);
@@ -173,17 +163,14 @@ export async function whitelistProduct(
 export async function setupOracle(
   chainlinkPricer: string,
   signer: SignerWithAddress,
-  useNewGammaOracle = false,
-  useNewGammaOwner = false
+  customOracle?: string
 ) {
   await hre.network.provider.request({
     method: "hardhat_impersonateAccount",
     params: [chainlinkPricer],
   });
 
-  const oracleOwner = useNewGammaOwner
-    ? GAMMA_WHITELIST_OWNER[chainId]
-    : ORACLE_OWNER[chainId];
+  const oracleOwner = ORACLE_OWNER[chainId];
 
   await hre.network.provider.request({
     method: "hardhat_impersonateAccount",
@@ -195,10 +182,10 @@ export async function setupOracle(
   const forceSend = await forceSendContract.deploy(); // force Send is a contract that forces the sending of Ether to WBTC minter (which is a contract with no receive() function)
   await forceSend
     .connect(signer)
-    .go(chainlinkPricer, { value: parseEther("0.5") });
+    .go(chainlinkPricer, { value: parseEther("1") });
 
   const oracle = new ethers.Contract(
-    useNewGammaOracle ? GAMMA_ORACLE_NEW[chainId] : GAMMA_ORACLE[chainId],
+    customOracle || GAMMA_ORACLE[chainId],
     ORACLE_ABI,
     pricerSigner
   );
@@ -207,7 +194,7 @@ export async function setupOracle(
 
   await signer.sendTransaction({
     to: oracleOwner,
-    value: parseEther("0.5"),
+    value: parseEther("1"),
   });
 
   await oracle
@@ -287,7 +274,7 @@ export async function addMinter(
   const forceSend = await forceSendContract.deploy(); // Some contract do not have receive(), so we force send
   await forceSend.deployed();
   await forceSend.go(contractOwner, {
-    value: parseEther("0.5"),
+    value: parseEther("1"),
   });
 
   await contract.connect(tokenOwnerSigner).addMinter(minter);
@@ -316,7 +303,7 @@ export async function mintToken(
   const forceSend = await forceSendContract.deploy(); // Some contract do not have receive(), so we force send
   await forceSend.deployed();
   await forceSend.go(contractOwner, {
-    value: parseEther("0.5"),
+    value: parseEther("1"),
   });
 
   if (isBridgeToken(chainId, contract.address)) {
@@ -327,6 +314,7 @@ export async function mintToken(
       .mint(recipient, amount, recipient, 0, txid);
   } else if (
     contract.address === USDC_ADDRESS[chainId] ||
+    contract.address === SAVAX_ADDRESS[chainId] ||
     chainId === CHAINID.AURORA_MAINNET
   ) {
     await contract.connect(tokenOwnerSigner).transfer(recipient, amount);
@@ -533,6 +521,7 @@ export const getDeltaStep = (asset: string) => {
       return BigNumber.from("1000");
     case "AAVE":
       return BigNumber.from("10");
+    case "SAVAX":
     case "NEAR":
     case "AURORA":
       return BigNumber.from("5");

@@ -20,6 +20,12 @@ import {
   OptionsPremiumPricerInStables_BYTECODE,
   TestVolOracle_BYTECODE,
   YVUSDC_V0_3_0,
+  ETH_PRICE_ORACLE,
+  BTC_PRICE_ORACLE,
+  USDC_PRICE_ORACLE,
+  ETH_USDC_POOL,
+  WBTC_USDC_POOL,
+  STETH_GAMMA_ORACLE,
 } from "../constants/constants";
 import {
   deployProxy,
@@ -47,15 +53,6 @@ const DELAY_INCREMENT = 100;
 const gasPrice = parseUnits("1", "gwei");
 const FEE_SCALING = BigNumber.from(10).pow(6);
 const WEEKS_PER_YEAR = 52142857;
-
-const PERIOD = 43200; // 12 hours
-
-const ethusdcPool = "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8";
-const wbtcusdcPool = "0x99ac8ca7087fa4a2a1fb6357269965a2014abc35";
-
-const wethPriceOracleAddress = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
-const wbtcPriceOracleAddress = "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c";
-const usdcPriceOracleAddress = "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6";
 
 const chainId = network.config.chainId;
 
@@ -223,7 +220,11 @@ function behavesLikeRibbonOptionsVault(params: {
     };
 
     const rollToSecondOption = async (settlementPrice: BigNumber) => {
-      const oracle = await setupOracle(params.underlyingPricer, ownerSigner);
+      const oracle = await setupOracle(
+        params.underlyingPricer,
+        ownerSigner,
+        STETH_GAMMA_ORACLE
+      );
 
       await setOpynOracleExpiryPriceYearn(
         params.asset,
@@ -257,10 +258,7 @@ function behavesLikeRibbonOptionsVault(params: {
           {
             forking: {
               jsonRpcUrl: process.env.TEST_URI,
-              blockNumber:
-                params.depositAsset === WETH_ADDRESS[chainId]
-                  ? 12474917
-                  : 12655142,
+              blockNumber: 12655142,
             },
           },
         ],
@@ -291,19 +289,23 @@ function behavesLikeRibbonOptionsVault(params: {
         ownerSigner
       );
 
-      volOracle = await TestVolOracle.deploy(PERIOD, 7);
+      volOracle = await TestVolOracle.deploy(time.PERIOD, 7);
 
       await volOracle.initPool(
-        asset === WETH_ADDRESS[chainId] ? ethusdcPool : wbtcusdcPool
+        asset === WETH_ADDRESS[chainId]
+          ? ETH_USDC_POOL[chainId]
+          : WBTC_USDC_POOL[chainId]
       );
 
       optionsPremiumPricer = await OptionsPremiumPricer.deploy(
-        params.asset === WETH_ADDRESS[chainId] ? ethusdcPool : wbtcusdcPool,
+        params.asset === WETH_ADDRESS[chainId]
+          ? ETH_USDC_POOL[chainId]
+          : WBTC_USDC_POOL[chainId],
         volOracle.address,
         params.asset === WETH_ADDRESS[chainId]
-          ? wethPriceOracleAddress
-          : wbtcPriceOracleAddress,
-        usdcPriceOracleAddress
+          ? ETH_PRICE_ORACLE[chainId]
+          : BTC_PRICE_ORACLE[chainId],
+        USDC_PRICE_ORACLE[chainId]
       );
 
       strikeSelection = await StrikeSelection.deploy(
@@ -1802,7 +1804,11 @@ function behavesLikeRibbonOptionsVault(params: {
 
         await depositIntoVault(params.depositAsset, vault, depositAmount);
 
-        oracle = await setupOracle(params.underlyingPricer, ownerSigner);
+        oracle = await setupOracle(
+          params.underlyingPricer,
+          ownerSigner,
+          STETH_GAMMA_ORACLE
+        );
       });
 
       it("reverts when not called with keeper", async function () {
@@ -2449,7 +2455,11 @@ function behavesLikeRibbonOptionsVault(params: {
       let oracle: Contract;
 
       time.revertToSnapshotAfterEach(async function () {
-        oracle = await setupOracle(params.underlyingPricer, ownerSigner);
+        oracle = await setupOracle(
+          params.underlyingPricer,
+          ownerSigner,
+          STETH_GAMMA_ORACLE
+        );
       });
 
       it("is able to redeem deposit at new price per share", async function () {
@@ -2802,7 +2812,11 @@ function behavesLikeRibbonOptionsVault(params: {
       let oracle: Contract;
 
       time.revertToSnapshotAfterEach(async () => {
-        oracle = await setupOracle(params.underlyingPricer, ownerSigner);
+        oracle = await setupOracle(
+          params.underlyingPricer,
+          ownerSigner,
+          STETH_GAMMA_ORACLE
+        );
       });
 
       it("reverts when user initiates withdraws without any deposit", async function () {
@@ -3147,7 +3161,11 @@ function behavesLikeRibbonOptionsVault(params: {
 
         await depositIntoVault(params.depositAsset, vault, depositAmount);
 
-        oracle = await setupOracle(params.underlyingPricer, ownerSigner);
+        oracle = await setupOracle(
+          params.underlyingPricer,
+          ownerSigner,
+          STETH_GAMMA_ORACLE
+        );
       });
 
       it("should revert if not owner", async function () {
@@ -3369,19 +3387,6 @@ function behavesLikeRibbonOptionsVault(params: {
     });
   });
 
-  const getTopOfPeriod = async () => {
-    const latestTimestamp = (await provider.getBlock("latest")).timestamp;
-    let topOfPeriod: number;
-
-    const rem = latestTimestamp % PERIOD;
-    if (rem < Math.floor(PERIOD / 2)) {
-      topOfPeriod = latestTimestamp - rem + PERIOD;
-    } else {
-      topOfPeriod = latestTimestamp + rem + PERIOD;
-    }
-    return topOfPeriod;
-  };
-
   const updateVol = async (asset: string) => {
     const values = [
       BigNumber.from("2000000000"),
@@ -3401,10 +3406,12 @@ function behavesLikeRibbonOptionsVault(params: {
 
     for (let i = 0; i < values.length; i++) {
       await volOracle.setPrice(values[i]);
-      const topOfPeriod = (await getTopOfPeriod()) + PERIOD;
+      const topOfPeriod = (await time.getTopOfPeriod()) + time.PERIOD;
       await time.increaseTo(topOfPeriod);
       await volOracle.mockCommit(
-        asset === WETH_ADDRESS[chainId] ? ethusdcPool : wbtcusdcPool
+        asset === WETH_ADDRESS[chainId]
+          ? ETH_USDC_POOL[chainId]
+          : WBTC_USDC_POOL[chainId]
       );
     }
   };

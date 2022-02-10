@@ -147,8 +147,8 @@ export default {
     apiKey: process.env.ETHERSCAN_API_KEY,
   },
   gasReporter: {
-    enabled: true,
-  }
+    enabled: false,
+  },
 };
 
 task("export-deployments", "Exports deployments into JSON", exportDeployments);
